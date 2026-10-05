@@ -359,6 +359,113 @@ def reports_summary():
 
 
 # =====================================================================
+# Documentos (catálogo en PDF, brochures, cartas de presentación, etc.)
+# =====================================================================
+
+MAX_DOCUMENT_SIZE = 20 * 1024 * 1024  # 20 MB
+
+
+def ensure_documents_table():
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS documents (
+            id SERIAL PRIMARY KEY,
+            name TEXT NOT NULL,
+            filename TEXT NOT NULL,
+            content_type TEXT,
+            size INTEGER,
+            data BYTEA NOT NULL,
+            uploaded_at TEXT
+        );
+    ''')
+    conn.commit()
+    cur.close(); conn.close()
+
+
+@app.route('/api/documents', methods=['GET'])
+def list_documents():
+    err = db_configured_or_error()
+    if err: return err
+    ensure_documents_table()
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute('SELECT id, name, filename, content_type, size, uploaded_at FROM documents ORDER BY uploaded_at DESC')
+    rows = [dict(r) for r in cur.fetchall()]
+    cur.close(); conn.close()
+    return jsonify(rows)
+
+
+@app.route('/api/documents', methods=['POST'])
+def upload_document():
+    err = db_configured_or_error()
+    if err: return err
+    ensure_documents_table()
+
+    if 'file' not in request.files:
+        return jsonify({'error': 'No se recibió ningún archivo.'}), 400
+    file = request.files['file']
+    if not file or not file.filename:
+        return jsonify({'error': 'No se recibió ningún archivo.'}), 400
+    if not file.filename.lower().endswith('.pdf'):
+        return jsonify({'error': 'Solo se permiten archivos PDF.'}), 400
+
+    data = file.read()
+    if len(data) == 0:
+        return jsonify({'error': 'El archivo está vacío.'}), 400
+    if len(data) > MAX_DOCUMENT_SIZE:
+        return jsonify({'error': f'El archivo supera el límite de {MAX_DOCUMENT_SIZE // (1024*1024)} MB.'}), 400
+
+    name = (request.form.get('name') or file.filename).strip()
+
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute('''
+        INSERT INTO documents (name, filename, content_type, size, data, uploaded_at)
+        VALUES (%s, %s, %s, %s, %s, %s)
+        RETURNING id, name, filename, content_type, size, uploaded_at
+    ''', (name, file.filename, file.content_type or 'application/pdf', len(data), psycopg2.Binary(data),
+          datetime.now().isoformat(timespec='seconds')))
+    row = dict(cur.fetchone())
+    conn.commit()
+    cur.close(); conn.close()
+    return jsonify(row)
+
+
+@app.route('/api/documents/<int:doc_id>/download')
+def download_document(doc_id):
+    err = db_configured_or_error()
+    if err: return err
+    ensure_documents_table()
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute('SELECT filename, content_type, data FROM documents WHERE id = %s', (doc_id,))
+    row = cur.fetchone()
+    cur.close(); conn.close()
+    if row is None:
+        return jsonify({'error': 'No se encontró ese documento.'}), 404
+    from flask import Response
+    return Response(
+        bytes(row['data']),
+        mimetype=row['content_type'] or 'application/pdf',
+        headers={'Content-Disposition': f'attachment; filename="{row["filename"]}"'}
+    )
+
+
+@app.route('/api/documents/<int:doc_id>', methods=['DELETE'])
+def delete_document(doc_id):
+    err = db_configured_or_error()
+    if err: return err
+    ensure_documents_table()
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute('DELETE FROM documents WHERE id = %s', (doc_id,))
+    conn.commit()
+    cur.close(); conn.close()
+    return jsonify({'ok': True})
+
+
+# =====================================================================
 # Consulta de RUC (SUNAT vía Decolecta)
 # =====================================================================
 
