@@ -363,6 +363,60 @@ def reports_summary():
 
 
 # =====================================================================
+# Configuración (datos de la empresa, compartidos entre todos los usuarios)
+# =====================================================================
+
+def ensure_settings_table():
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
+    ''')
+    conn.commit()
+    cur.close(); conn.close()
+
+
+@app.route('/api/settings', methods=['GET'])
+def get_settings():
+    err = db_configured_or_error()
+    if err: return err
+    ensure_settings_table()
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute('SELECT key, value FROM settings')
+    rows = cur.fetchall()
+    cur.close(); conn.close()
+    result = {}
+    for r in rows:
+        try:
+            result[r['key']] = json.loads(r['value'])
+        except ValueError:
+            continue
+    return jsonify(result)
+
+
+@app.route('/api/settings', methods=['PUT'])
+def save_settings():
+    err = db_configured_or_error()
+    if err: return err
+    ensure_settings_table()
+    data = request.get_json(force=True) or {}
+    conn = get_db()
+    cur = conn.cursor()
+    for key, value in data.items():
+        cur.execute('''
+            INSERT INTO settings (key, value) VALUES (%s, %s)
+            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+        ''', (key, json.dumps(value, ensure_ascii=False)))
+    conn.commit()
+    cur.close(); conn.close()
+    return jsonify({'ok': True})
+
+
+# =====================================================================
 # Documentos (catálogo en PDF, brochures, cartas de presentación, etc.)
 # =====================================================================
 
