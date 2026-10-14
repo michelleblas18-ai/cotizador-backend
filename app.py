@@ -167,8 +167,10 @@ def save_catalog():
     err = db_configured_or_error()
     if err: return err
     data = request.get_json(force=True) or {}
-    categories = data.get('categories', [])
-    products = data.get('products', [])
+    # Si por algún motivo llegan ids/SKUs repetidos, nos quedamos con el último
+    # de cada uno en vez de rechazar (y perder) todo el guardado.
+    categories = list({c.get('id', ''): c for c in data.get('categories', [])}.values())
+    products = list({p.get('sku', ''): p for p in data.get('products', [])}.values())
     conn = get_db()
     cur = conn.cursor()
     cur.execute('DELETE FROM categories')
